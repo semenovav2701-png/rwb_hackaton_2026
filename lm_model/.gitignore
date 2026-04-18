@@ -1,0 +1,6 @@
+.idea/
+.venv/
+model.egg-info/
+src/model.egg-info/
+catboost_info/
+src/__pycache__/
