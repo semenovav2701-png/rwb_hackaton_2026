@@ -1,153 +1,256 @@
-# Demand Forecasting Backend System (Wildberries Hackathon Project)
+# Project Overview
 
-## Overview
-
-This project is a backend system for demand forecasting across logistics routes, built during a 3-day hackathon. The system predicts future values of `target_2h` across multiple time horizons using machine learning models trained on engineered time-series features.
-
-The solution is built around a modular backend architecture with clear separation between data processing, feature engineering, model training, inference, and evaluation. It uses an ensemble of CatBoost and LightGBM models for robust predictions.
+This project is an end-to-end machine learning and backend system designed for time-series demand prediction and decision-making based on aggregated model outputs. It combines feature engineering pipelines, multi-horizon forecasting models, ensemble prediction logic, and a FastAPI-based service layer for serving predictions and decisions.
 
 ---
 
-## Key Features
+# System Architecture
 
-- Multi-horizon forecasting (1–10 steps ahead)
-- Ensemble of CatBoost + LightGBM models
-- Modular feature engineering pipeline (step-based system)
-- Custom validation and backtesting logic
-- Time-series lag features and statistical aggregations
-- Support for categorical and missing data handling
-- Full training + inference + submission pipeline
+The system is split into two main parts:
 
----
+## 1. Machine Learning Pipeline (`lm_model`)
 
-## System Architecture
+Responsible for data processing, feature engineering, model training, inference, and submission generation.
 
-### 1. Data Layer
-- Loads training and prediction datasets from Parquet files
-- Supports time-based splitting for train/validation scenarios
-- Implements sliding window training logic
+### Key Components:
 
----
+### Data Layer (`tables.py`)
 
-### 2. Feature Engineering Pipeline
+* `FilledTable`: used during training, contains full historical data.
+* `EmptyTable`: used during inference, relies on parental historical context.
+* Supports feature creation such as:
 
-A modular pipeline system where each transformation is an independent step.
+  * Time-based features (hour, day of week, cyclic encoding)
+  * Lag features
+  * Rolling and aggregated statistics
+  * Route-based historical statistics
 
-Feature types:
-- Timestamp decomposition (hour, day of week, day of month)
-- Cyclical encoding (sin/cos transformations)
-- Route-level aggregations (mean, historical patterns)
-- Lag features (1–12 steps)
-- Flow speed estimation
-- Anomaly detection flags
-- Target-based statistical features per route
+### Feature Engineering (`features_adder.py`)
 
-Each feature is implemented as a class with a unified interface:
-FeatureStep → apply(table, context)
+A modular pipeline that applies transformations:
 
-Pipeline execution is registry-based and fully configurable.
+* Timestamp parsing
+* Cyclic encodings (hour/day-of-week)
+* Flow speed estimation
+* Lag features creation
+* Route-level statistical features
+* Anomaly detection flags
 
----
+### Models (`model.py`)
 
-### 3. Model Layer
+Two main model families are used:
 
-CatBoost Model Manager:
-- One model per horizon
-- Native categorical feature support
-- Early stopping with validation sets
-- Strong performance on mixed-type data
+* CatBoost Regressor
+* LightGBM Regressor
 
-LightGBM Model Manager:
-- One model per horizon
-- Optimized for large-scale numerical features
-- Categorical preprocessing via dtype conversion
+Both are trained independently per forecasting horizon (multi-horizon learning strategy).
 
----
+### Training Strategy (`model_strategies.py`)
 
-### 4. Ensemble Strategy
+Supports interchangeable training strategies:
 
-Final prediction:
+* `TestStrategy`: includes train/validation split and evaluation
+* `SubmissionStrategy`: full-data training for final inference
 
-final_prediction = 0.5 * CatBoost + 0.5 * LightGBM
+Each horizon is trained as a separate model.
 
-This improves robustness and reduces variance across horizons.
+### Configuration (`config.py`)
 
----
+Centralized configuration for:
 
-### 5. Training Strategies
+* Model hyperparameters (CatBoost, LightGBM)
+* Feature lists
+* Application settings (data paths, time windows, split dates)
+* Forecast horizons
 
-Test Strategy:
-- Train/validation split (80/20)
-- Used for local evaluation and debugging
-- Computes metrics per horizon
+### Data Handler
 
-Submission Strategy:
-- Full dataset training
-- No validation split
-- Generates final predictions for submission
+Responsible for:
 
----
+* Loading parquet datasets
+* Time-window based splitting
+* Preparing training and prediction datasets
+* Writing final submission CSV
 
-## Evaluation Metrics
+### Ensemble Logic
 
-- WAPE (Weighted Absolute Percentage Error)
-- Bias
-- Score:
+Final predictions are generated using a simple weighted ensemble:
 
-Score = WAPE + Bias
+* 50% CatBoost
+* 50% LightGBM
+
+Metrics used:
+
+* WAPE (Weighted Absolute Percentage Error)
+* Bias
+* Combined score
 
 ---
 
-## Tech Stack
+# Backend Service (`backend`)
 
-- Python 3.10+
-- Pandas / NumPy
-- CatBoost
-- LightGBM
-- Parquet data format
-- Object-oriented architecture
-- Design patterns (Strategy, Factory, Registry, Pipeline)
+A FastAPI-based microservice responsible for serving predictions, aggregations, and decision-making logic.
 
----
+## Core Design
 
-## Design Patterns Used
+The backend follows a strategy-based architecture:
 
-- Strategy Pattern → training/inference modes
-- Factory Pattern → model creation
-- Pipeline Pattern → feature engineering
-- Registry Pattern → feature step execution
-- Modular service-based backend design
+* Aggregation Strategy
+* Decision Strategy
+* Source abstraction via factories
 
 ---
 
-## Engineering Decisions
+## API Endpoints
 
-- Horizon-based independent models (no shared weights)
-- Strict separation of concerns (data / features / models)
-- Fully modular feature system for extensibility
-- Explicit handling of missing/edge cases
-- Lightweight ensemble instead of complex stacking
-- Designed for fast iteration under hackathon constraints
+### Health Check
 
----
+```
+GET /health
+```
 
-## What This Project Demonstrates
-
-- Backend architecture design for ML systems
-- Time-series forecasting pipelines
-- Feature engineering at scale
-- Multi-model orchestration (ensemble systems)
-- Production-style engineering under tight deadlines
-- Ability to build end-to-end ML backend systems
+Returns service status.
 
 ---
 
-## Notes
+### Predictions API
 
-The project was implemented in 3 days under hackathon constraints, prioritizing:
-- System stability
-- Modularity
-- Reproducibility
-- Extensibility
+```
+GET /predictions
+POST /predictions
+```
 
-Despite time limitations, the architecture was designed to be production-like and scalable.
+* Stores and retrieves prediction records
+* Uses in-memory storage (demo implementation)
+
+---
+
+### Planning API
+
+```
+POST /plan
+```
+
+Main endpoint that:
+
+1. Aggregates predictions by route and timestamp
+2. Applies decision logic to compute required resources (e.g., trucks)
+3. Returns final planning output
+
+---
+
+## Aggregation Layer (`aggregation.py`)
+
+Responsible for grouping raw predictions.
+
+### StrategyCounter
+
+* Groups predictions by:
+
+  * `office_from_id`
+  * `timestamp`
+* Sums predicted values into total volume
+
+---
+
+## Decision Engine (`decision.py`)
+
+Transforms aggregated volumes into actionable decisions.
+
+### VolumeBasedTruckCounter
+
+* Converts total volume into number of trucks
+* Applies:
+
+  * buffer coefficient
+  * min/max constraints
+
+---
+
+## Application Layer (`application.py`)
+
+Orchestrates the full pipeline:
+
+1. Aggregation
+2. Decision making
+3. Output generation
+
+---
+
+## Strategy Pattern System
+
+The backend uses factories to dynamically select implementations:
+
+* `AggregationStrategyFactory`
+* `DecisionStrategyFactory`
+* `DataSourceFactory`
+
+This allows easy extension without modifying core logic.
+
+---
+
+## Data Sources
+
+Supports pluggable prediction sources.
+
+### Demo Source
+
+Provides static mock predictions for testing and development.
+
+---
+
+## Schema (`schemas.py`)
+
+Defines core data model:
+
+```python
+Prediction:
+- route_id
+- office_from_id
+- timestamp
+- predicted_target_2h
+```
+
+---
+
+# Key Features
+
+* Multi-horizon forecasting (1–10 steps ahead)
+* Dual-model ensemble (CatBoost + LightGBM)
+* Modular feature engineering pipeline
+* Strategy-based backend architecture
+* Extensible data source system
+* REST API for prediction and planning
+* Time-series aware training and inference
+
+---
+
+# Typical Workflow
+
+1. Load historical data
+2. Build features
+3. Train models per horizon
+4. Evaluate (optional validation mode)
+5. Generate predictions
+6. Aggregate predictions in backend
+7. Apply decision logic
+8. Output final operational plan
+
+---
+
+# Output Example
+
+Final system output typically includes:
+
+* Route-level or office-level aggregated demand
+* Required resource allocation (e.g., number of trucks)
+* Timestamped planning decisions
+
+---
+
+# Notes
+
+* Designed for extensibility and experimentation
+* Supports both training and production inference modes
+* Uses modular design for ML + backend separation
+
