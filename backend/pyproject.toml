@@ -1,0 +1,36 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "This uv is used for backend"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi[all]>=0.135.2",
+    "unicorn>=2.1.4",
+    "uvicorn>=0.42.0",
+]
+
+[project.scripts]
+start = "python src/main.py"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["src"] 
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["B008", "B009"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
